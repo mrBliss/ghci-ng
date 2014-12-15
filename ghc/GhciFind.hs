@@ -147,16 +147,33 @@ findName infos mi string sl sc el ec =
       case getSrcSpan name of
         UnhelpfulSpan{} -> tryExternalModuleResolution
         _ -> return (Right (getName name))
-  where tryExternalModuleResolution =
-          case find (matchName string)
+  where
+    (qual, string') = fmap (fromMaybe string . stripPrefix ".") $
+                      break (== '.') string
+    tryExternalModuleResolution =
+          case find (matchName string')
                     (fromMaybe [] (modInfoTopLevelScope (modinfoInfo mi))) of
             Nothing ->
               return (Left "Couldn't resolve to any modules.")
             Just imported -> resolveNameFromModule infos imported
-        matchName :: String -> Name -> Bool
-        matchName str name =
-          str ==
-          occNameString (getOccName name)
+    matchQual :: LImportDecl name -> Bool
+    matchQual (L _ (ImportDecl { ideclQualified = True
+                               , ideclAs = Just q }))
+      = moduleNameString q == qual
+    matchQual _ = False
+
+    imports = ms_textual_imps $ modinfoSummary mi
+
+    mb_qualModName :: Maybe ModuleName
+    mb_qualModName = (unLoc . ideclName . unLoc) `fmap` find matchQual imports
+
+    matchName :: String -> Name -> Bool
+    matchName str name
+      = str == occNameString (getOccName name) &&
+        fromMaybe True
+        (do qualModName <- mb_qualModName
+            modName     <- moduleName `fmap` nameModule_maybe name
+            return $ moduleNameString qualModName == moduleNameString modName)
 
 -- | Try to resolve the name from another (loaded) module's exports.
 resolveNameFromModule :: GhcMonad m
